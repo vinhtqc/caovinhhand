@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cat's Cradle - Hand Tracking String Animation</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            background: #0a0e27;
+            font-family: 'Arial', sans-serif;
+        }
+        
+        #container {
+            position: relative;
+            width: 100%;
+            height: 100%;
+        }
+        
+        #drawingCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            display: block;
+        }
+        
+        #info {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: #00ffff;
+            font-size: 14px;
+            text-shadow: 0 0 10px #00ffff;
+            z-index: 10;
+            font-family: 'Courier New', monospace;
+        }
+        
+        #status {
+            position: absolute;
+            bottom: 20px;
+            left: 20px;
+            color: #ff00ff;
+            font-size: 12px;
+            text-shadow: 0 0 10px #ff00ff;
+            z-index: 10;
+            font-family: 'Courier New', monospace;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <canvas id="drawingCanvas"></canvas>
+        <div id="info">Cat's Cradle v1.0</div>
+        <div id="status">Initializing...</div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+
+    <script>
+        // Canvas setup
+        const drawingCanvas = document.getElementById('drawingCanvas');
+        const drawingCtx = drawingCanvas.getContext('2d');
+        const statusDiv = document.getElementById('status');
+
+        let video = null;
+        let camera = null;
+        let hands = null;
+        let results = null;
+        let particleSystem = [];
+
+        // Particle class for explosion effect
+        class Particle {
+            constructor(x, y) {
+                this.x = x;
+                this.y = y;
+                this.vx = (Math.random() - 0.5) * 8;
+                this.vy = (Math.random() - 0.5) * 8;
+                this.life = 1.0;
+                this.decay = 0.02;
+                this.hue = Math.random() * 60; // Cyan to Magenta range
+            }
+
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.vy += 0.1; // gravity
+                this.life -= this.decay;
+            }
+
+            draw(ctx) {
+                if (this.life > 0) {
+                    ctx.save();
+                    ctx.globalAlpha = this.life;
+                    ctx.fillStyle = `hsl(${this.hue}, 100%, 50%)`;
+                    ctx.shadowColor = `hsl(${this.hue}, 100%, 50%)`;
+                    ctx.shadowBlur = 20;
+                    ctx.beginPath();
+                    ctx.arc(this.x, this.y, 3, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.restore();
+                }
+            }
+        }
+
+        // Initialize MediaPipe Hands
+        async function initHands() {
+            hands = new Hands({
+                locateFile: (file) => {
+                    return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+                }
+            });
+
+            hands.setOptions({
+                maxNumHands: 2,
+                modelComplexity: 1,
+                minDetectionConfidence: 0.5,
+                minTrackingConfidence: 0.5
+            });
+
+            hands.onResults(onResults);
+
+            // Set up camera
+            camera = new Camera(video, {
+                onFrame: async () => {
+                    await hands.send({ image: video });
+                },
+                width: drawingCanvas.width,
+                height: drawingCanvas.height
+            });
+
+            camera.start();
+            statusDiv.textContent = 'Ready - Both hands detected';
+        }
+
+        // Handle MediaPipe results
+        function onResults(handResults) {
+            results = handResults;
+            statusDiv.textContent = `Hands detected: ${handResults.multiHandLandmarks.length}`;
+        }
+
+        // Setup canvas and video elements
+        function setup() {
+            drawingCanvas.width = window.innerWidth;
+            drawingCanvas.height = window.innerHeight;
+
+            // Create hidden video element for camera
+            video = document.createElement('video');
+            video.style.display = 'none';
+            document.body.appendChild(video);
+
+            initHands();
+        }
+
+        // Draw video feed with reduced opacity
+        function drawVideoFeed() {
+            if (!video || video.readyState !== video.HAVE_ENOUGH_DATA) return;
+            
+            // Flip horizontally (mirror)
+            drawingCtx.save();
+            drawingCtx.scale(-1, 1);
+            drawingCtx.translate(-drawingCanvas.width, 0);
+            drawingCtx.globalAlpha = 0.4; // Semi-transparent video background
+            drawingCtx.drawImage(video, 0, 0, drawingCanvas.width, drawingCanvas.height);
+            drawingCtx.restore();
+        }
+
+        // Draw hand landmarks
+        function drawHands() {
+            if (!results || !results.multiHandLandmarks) return;
+
+            const hands = results.multiHandLandmarks;
+            const handedness = results.multiHandedness;
+
+            hands.forEach((landmarks, handIndex) => {
+                // Iron Man color scheme: Red and Gold
+                const isLeftHand = handIndex === 0;
+                const primaryColor = '#FF4500'; // Red-orange
+                const secondaryColor = '#FFD700'; // Gold
+                const glowColor = isLeftHand ? '#FF1744' : '#FF6E40';
+
+                // Draw palm repulsor (center of hand - landmark 0)
+                const palmLandmark = landmarks[0];
+                const palmX = (1 - palmLandmark.x) * drawingCanvas.width;
+                const palmY = palmLandmark.y * drawingCanvas.height;
+
+                // Draw large glowing repulsor effect in palm
+                for (let i = 3; i >= 0; i--) {
+                    drawingCtx.save();
+                    const glow = 40 - (i * 8);
+                    drawingCtx.fillStyle = glowColor;
+                    drawingCtx.globalAlpha = 0.3 / (i + 1);
+                    drawingCtx.shadowColor = glowColor;
+                    drawingCtx.shadowBlur = 30;
+                    drawingCtx.beginPath();
+                    drawingCtx.arc(palmX, palmY, glow, 0, Math.PI * 2);
+                    drawingCtx.fill();
+                    drawingCtx.restore();
+                }
+
+                // Draw bright repulsor core
+                drawingCtx.save();
+                drawingCtx.fillStyle = secondaryColor;
+                drawingCtx.shadowColor = secondaryColor;
+                drawingCtx.shadowBlur = 25;
+                drawingCtx.beginPath();
+                drawingCtx.arc(palmX, palmY, 20, 0, Math.PI * 2);
+                drawingCtx.fill();
+
+                // Inner core
+                drawingCtx.fillStyle = '#FFFFFF';
+                drawingCtx.globalAlpha = 0.9;
+                drawingCtx.beginPath();
+                drawingCtx.arc(palmX, palmY, 12, 0, Math.PI * 2);
+                drawingCtx.fill();
+                drawingCtx.restore();
+
+                // Draw armored finger segments
+                const fingerIndices = [
+                    [1, 2, 3, 4],       // Thumb
+                    [5, 6, 7, 8],       // Index
+                    [9, 10, 11, 12],    // Middle
+                    [13, 14, 15, 16],   // Ring
+                    [17, 18, 19, 20]    // Pinky
+                ];
+
+                fingerIndices.forEach((fingerJoints) => {
+                    // Draw finger armor segments
+                    for (let i = 0; i < fingerJoints.length - 1; i++) {
+                        const startLandmark = landmarks[fingerJoints[i]];
+                        const endLandmark = landmarks[fingerJoints[i + 1]];
+                        
+                        const startX = (1 - startLandmark.x) * drawingCanvas.width;
+                        const startY = startLandmark.y * drawingCanvas.height;
+                        const endX = (1 - endLandmark.x) * drawingCanvas.width;
+                        const endY = endLandmark.y * drawingCanvas.height;
+
+                        // Draw thick armor plating with glow
+                        drawingCtx.save();
+                        drawingCtx.strokeStyle = primaryColor;
+                        drawingCtx.lineWidth = 6;
+                        drawingCtx.lineCap = 'round';
+                        drawingCtx.shadowColor = glowColor;
+                        drawingCtx.shadowBlur = 15;
+                        drawingCtx.beginPath();
+                        drawingCtx.moveTo(startX, startY);
+                        drawingCtx.lineTo(endX, endY);
+                        drawingCtx.stroke();
+
+                        // Draw gold trim
+                        drawingCtx.strokeStyle = secondaryColor;
+                        drawingCtx.lineWidth = 2;
+                        drawingCtx.shadowBlur = 8;
+                        drawingCtx.shadowColor = secondaryColor;
+                        drawingCtx.beginPath();
+                        drawingCtx.moveTo(startX, startY);
+                        drawingCtx.lineTo(endX, endY);
+                        drawingCtx.stroke();
+                        drawingCtx.restore();
+
+                        // Draw joint points as glowing metal spheres
+                        const jointX = endX;
+                        const jointY = endY;
+
+                        drawingCtx.save();
+                        drawingCtx.fillStyle = secondaryColor;
+                        drawingCtx.shadowColor = glowColor;
+                        drawingCtx.shadowBlur = 12;
+                        drawingCtx.beginPath();
+                        drawingCtx.arc(jointX, jointY, 5, 0, Math.PI * 2);
+                        drawingCtx.fill();
+
+                        // Joint highlight
+                        drawingCtx.fillStyle = '#FFFFFF';
+                        drawingCtx.globalAlpha = 0.7;
+                        drawingCtx.beginPath();
+                        drawingCtx.arc(jointX, jointY, 2, 0, Math.PI * 2);
+                        drawingCtx.fill();
+                        drawingCtx.restore();
+                    }
+
+                    // Draw fingertip as pointed energy tip
+                    const fingertipLandmark = landmarks[fingerJoints[fingerJoints.length - 1]];
+                    const tipX = (1 - fingertipLandmark.x) * drawingCanvas.width;
+                    const tipY = fingertipLandmark.y * drawingCanvas.height;
+
+                    drawingCtx.save();
+                    drawingCtx.fillStyle = glowColor;
+                    drawingCtx.shadowColor = glowColor;
+                    drawingCtx.shadowBlur = 20;
+                    
+                    // Draw pointed energy tip
+                    drawingCtx.beginPath();
+                    drawingCtx.arc(tipX, tipY, 6, 0, Math.PI * 2);
+                    drawingCtx.fill();
+
+                    drawingCtx.fillStyle = secondaryColor;
+                    drawingCtx.beginPath();
+                    drawingCtx.arc(tipX, tipY, 3, 0, Math.PI * 2);
+                    drawingCtx.fill();
+                    drawingCtx.restore();
+                });
+
+                drawingCtx.restore();
+            });
+        }
+
+        // Draw strings between fingertips
+        function drawStrings() {
+            if (!results || results.multiHandLandmarks.length < 2) return;
+
+            const leftHand = results.multiHandLandmarks[0];
+            const rightHand = results.multiHandLandmarks[1];
+
+            // Fingertip indices
+            const fingertips = [4, 8, 12, 16, 20]; // Thumb, Index, Middle, Ring, Pinky
+
+            fingertips.forEach((leftTipIdx) => {
+                fingertips.forEach((rightTipIdx) => {
+                    const leftTip = leftHand[leftTipIdx];
+                    const rightTip = rightHand[rightTipIdx];
+
+                    const x1 = (1 - leftTip.x) * drawingCanvas.width; // Mirror x coordinate
+                    const y1 = leftTip.y * drawingCanvas.height;
+                    const x2 = (1 - rightTip.x) * drawingCanvas.width; // Mirror x coordinate
+                    const y2 = rightTip.y * drawingCanvas.height;
+
+                    const distance = Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2);
+                    const maxDistance = drawingCanvas.width * 0.7;
+
+                    // Only draw if within reasonable distance
+                    if (distance < maxDistance) {
+                        // Color gradient based on distance
+                        const colorT = Math.min(distance / maxDistance, 1);
+                        let hue = 60 + (colorT * 120); // Yellow to Cyan
+                        let saturation = 100;
+                        let lightness = 50 + (colorT * 10);
+
+                        // Line thickness based on distance (elastic feel)
+                        const lineWidth = 3 * (1 - colorT * 0.5);
+
+                        drawingCtx.save();
+                        drawingCtx.strokeStyle = `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+                        drawingCtx.lineWidth = lineWidth;
+                        drawingCtx.shadowColor = `hsl(${hue}, ${saturation}%, ${lightness}%)`;
+                        drawingCtx.shadowBlur = 20;
+                        drawingCtx.globalAlpha = 0.7 + (colorT * 0.3);
+
+                        // Draw curved line with slight wave
+                        const midX = (x1 + x2) / 2;
+                        const midY = (y1 + y2) / 2;
+                        const offsetDistance = Math.sin(Date.now() * 0.003) * 20;
+
+                        drawingCtx.beginPath();
+                        drawingCtx.moveTo(x1, y1);
+                        drawingCtx.quadraticCurveTo(midX + offsetDistance, midY, x2, y2);
+                        drawingCtx.stroke();
+
+                        drawingCtx.restore();
+
+                        // Check for fingertip collision and create particles
+                        const touchDistance = 50;
+                        if (distance < touchDistance) {
+                            for (let i = 0; i < 5; i++) {
+                                particleSystem.push(new Particle(midX, midY));
+                            }
+                        }
+                    }
+                });
+            });
+        }
+
+        // Update and draw particles
+        function updateParticles() {
+            particleSystem = particleSystem.filter(p => p.life > 0);
+            
+            particleSystem.forEach(particle => {
+                particle.update();
+                particle.draw(drawingCtx);
+            });
+        }
+
+        // Main animation loop
+        function animate() {
+            // Clear drawing canvas
+            drawingCtx.fillStyle = '#0a0e27';
+            drawingCtx.fillRect(0, 0, drawingCanvas.width, drawingCanvas.height);
+
+            // Draw elements
+            drawVideoFeed();
+            drawingCtx.globalAlpha = 1.0; // Reset alpha after video
+            drawHands();
+            drawStrings();
+            updateParticles();
+
+            requestAnimationFrame(animate);
+        }
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            drawingCanvas.width = window.innerWidth;
+            drawingCanvas.height = window.innerHeight;
+        });
+
+        // Start application
+        setup();
+        animate();
+    </script>
+</body>
+</html>
